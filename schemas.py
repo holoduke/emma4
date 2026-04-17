@@ -138,6 +138,20 @@ class PeopleSegResponse(BaseModel):
     latency_ms: int
 
 
+class SegmentAllRequest(BaseModel):
+    image: str = Field(..., description="Base64 JPEG/PNG")
+    imgsz: int = Field(480, ge=256, le=1024)
+    conf: float = Field(0.4, ge=0.05, le=0.95)
+
+
+class SegmentAllResponse(BaseModel):
+    w: int
+    h: int
+    polygons: list[list[list[int]]]
+    count: int
+    latency_ms: int
+
+
 class TranscribeRequest(BaseModel):
     audio: str = Field(..., description="Base64 of any audio container ffmpeg can read (WebM, MP3, WAV)")
     language: str | None = Field(None, max_length=8, description="ISO language code hint, e.g. 'en'")

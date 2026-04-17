@@ -683,6 +683,7 @@ function stopCam() {
   if (typeof stopPose === "function") stopPose();
   if (typeof stopFace === "function") stopFace();
   if (typeof stopPeople === "function") stopPeople();
+  if (typeof stopSegall === "function") stopSegall();
   autoTrackPrimed = false;
   if (camResizeObserver) {
     camResizeObserver.disconnect();
@@ -882,10 +883,21 @@ let trackBusy = false;
 let trackUserDisabled = false;
 let masksOn = localStorage.getItem("gemma4.masks") === "1";
 masksToggle.setAttribute("aria-pressed", masksOn ? "true" : "false");
+function reconcileSegmentMode() {
+  // SEGMENT on + TRACK on  -> masks applied to TRACK detections (in track loop)
+  // SEGMENT on + TRACK off -> standalone FastSAM auto-segmentation loop
+  // SEGMENT off            -> stop the standalone loop
+  if (masksOn && !trackTimer && camStream) {
+    if (!segallTimer) startSegall();
+  } else {
+    if (segallTimer) stopSegall();
+  }
+}
 masksToggle.addEventListener("click", () => {
   masksOn = !masksOn;
   localStorage.setItem("gemma4.masks", masksOn ? "1" : "0");
   masksToggle.setAttribute("aria-pressed", masksOn ? "true" : "false");
+  reconcileSegmentMode();
 });
 
 const COLORS = [
@@ -933,14 +945,14 @@ function clearOverlay() {
 }
 
 // Shared overlay state so TRACK / POSE / FACE can all composite on the same canvas.
-const overlay = { detect: null, pose: null, face: null, people: null };
+const overlay = { detect: null, pose: null, face: null, people: null, segall: null };
 function clearOverlayState(which) {
   if (which) overlay[which] = null;
-  else { overlay.detect = null; overlay.pose = null; overlay.face = null; overlay.people = null; }
+  else Object.keys(overlay).forEach((k) => (overlay[k] = null));
 }
 
 function drawOverlay() {
-  const srcs = [overlay.detect, overlay.pose, overlay.face, overlay.people].filter(Boolean);
+  const srcs = [overlay.detect, overlay.pose, overlay.face, overlay.people, overlay.segall].filter(Boolean);
   if (!srcs.length) { clearOverlay(); return; }
   const cw = Math.max(...srcs.map((s) => s.w || 0));
   const ch = Math.max(...srcs.map((s) => s.h || 0));
@@ -949,11 +961,32 @@ function drawOverlay() {
   const ctx = camCanvas.getContext("2d");
   ctx.clearRect(0, 0, cw, ch);
   camLabels.innerHTML = "";
-  // Draw people mat first so detections/skeleton/face sit on top.
+  // segall goes first (lowest layer), then people, then specific pipelines on top.
+  if (overlay.segall) _drawSegallOn(ctx, overlay.segall);
   if (overlay.people) _drawPeopleOn(ctx, overlay.people);
   if (overlay.detect) _drawDetectionsOn(ctx, overlay.detect, cw, ch);
   if (overlay.pose)   _drawPoseOn(ctx, overlay.pose);
   if (overlay.face)   _drawFaceOn(ctx, overlay.face);
+}
+
+function _drawSegallOn(ctx, data) {
+  if (!data.polygons || !data.polygons.length) return;
+  // Rotate through a rainbow-ish palette so adjacent regions are distinguishable.
+  const hues = [200, 320, 140, 40, 280, 90, 350, 170, 60, 260];
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < data.polygons.length; i++) {
+    const poly = data.polygons[i];
+    if (poly.length < 3) continue;
+    const hue = hues[i % hues.length];
+    ctx.fillStyle = `hsla(${hue}, 90%, 55%, 0.22)`;
+    ctx.strokeStyle = `hsla(${hue}, 95%, 65%, 0.75)`;
+    ctx.beginPath();
+    ctx.moveTo(poly[0][0], poly[0][1]);
+    for (let j = 1; j < poly.length; j++) ctx.lineTo(poly[j][0], poly[j][1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
 }
 
 function _drawPeopleOn(ctx, data) {
@@ -1212,6 +1245,8 @@ function startTrack() {
   }
   trackToggle.setAttribute("aria-pressed", "true");
   document.body.classList.add("track-armed");
+  // TRACK takes over the mask pipeline; stop the standalone segment-all loop.
+  if (segallTimer) stopSegall();
   const myToken = ++trackToken;
   const tick = async () => {
     if (myToken !== trackToken) return;
@@ -1235,6 +1270,8 @@ function stopTrack() {
   drawOverlay();
   setStat("s-yolo", "--");
   setStat("s-sam", "--");
+  // If SEGMENT is still requested, fall back to standalone auto-segmentation.
+  reconcileSegmentMode();
 }
 
 trackToggle.addEventListener("click", () => {
@@ -1863,6 +1900,53 @@ function stopPeople() {
   setStat("s-op-people", "--");
 }
 peopleBtnEl.addEventListener("click", () => (peopleTimer ? stopPeople() : startPeople()));
+
+/* ---------- live SEGMENT-all loop (FastSAM auto, when TRACK is off) ---------- */
+let segallTimer = null, segallToken = 0, segallBusy = false;
+
+async function segallTick() {
+  if (segallBusy || !camStream) return;
+  const myToken = segallToken;
+  segallBusy = true;
+  try {
+    const b = await captureFrame(FRAME_SIZE, 0.7);
+    if (!b) return;
+    const res = await fetch("/segment-all", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: b, imgsz: FRAME_SIZE }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (myToken !== segallToken) return;
+    overlay.segall = data;
+    drawOverlay();
+    if (data.latency_ms != null) setStat("s-sam", `${data.latency_ms} ms`);
+  } catch (err) {
+    console.warn("segall loop", err);
+    setStat("s-sam", "err");
+  } finally {
+    segallBusy = false;
+  }
+}
+
+function startSegall() {
+  if (segallTimer || !camStream) return;
+  const t = ++segallToken;
+  const loop = async () => {
+    if (t !== segallToken) return;
+    await segallTick();
+    if (t === segallToken) segallTimer = setTimeout(loop, 30);
+  };
+  segallTimer = setTimeout(loop, 0);
+}
+function stopSegall() {
+  segallToken++;
+  if (segallTimer) clearTimeout(segallTimer);
+  segallTimer = null;
+  clearOverlayState("segall");
+  drawOverlay();
+}
 
 /* Legacy one-shot FACE card (kept but no longer wired to the button). */
 function _legacyFaceOneShot() {

@@ -42,6 +42,8 @@ from schemas import (
     PeopleSegResponse,
     PoseRequest,
     PoseResponse,
+    SegmentAllRequest,
+    SegmentAllResponse,
     RmbgRequest,
     RmbgResponse,
     ScanRequest,
@@ -598,6 +600,18 @@ async def people_endpoint(request: ImageOnlyRequest) -> PeopleSegResponse:
         raise HTTPException(status_code=500, detail=str(err)) from err
     log.info(f"/segment-people -> {res['latency_ms']}ms count={res['count']}")
     return PeopleSegResponse(**res)
+
+
+@app.post("/segment-all", response_model=SegmentAllResponse)
+async def segment_all_endpoint(request: SegmentAllRequest) -> SegmentAllResponse:
+    import vision
+    try:
+        res = await asyncio.to_thread(vision.segment_all, request.image, request.imgsz, request.conf)
+    except Exception as err:
+        log.error(f"/segment-all !! {err}")
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    log.info(f"/segment-all -> {res['latency_ms']}ms count={res['count']}")
+    return SegmentAllResponse(**res)
 
 
 @app.post("/face", response_model=FaceMeshResponse)

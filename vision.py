@@ -136,6 +136,7 @@ _ocr_reader: Any = None
 _face_mesh: Any = None
 _emotion_pipe: Any = None
 _selfie_seg: Any = None
+_fastsam_auto: Any = None
 
 
 def _ensure_rmbg():
@@ -400,6 +401,67 @@ def _ensure_selfie_seg():
     )
     _selfie_seg = mp_vision.ImageSegmenter.create_from_options(opts)
     return _selfie_seg
+
+
+def _ensure_fastsam_auto():
+    global _fastsam_auto
+    if _fastsam_auto is not None:
+        return _fastsam_auto
+    from ultralytics import FastSAM
+    from ultralytics.utils.downloads import attempt_download_asset
+    attempt_download_asset("FastSAM-s.pt")
+    log.info("loading FastSAM-s for auto-segmentation...")
+    _fastsam_auto = FastSAM("FastSAM-s.pt")
+    return _fastsam_auto
+
+
+def segment_all(image_b64: str, imgsz: int = 480, conf: float = 0.4) -> dict:
+    """Automatic scene segmentation — no prompt needed. Returns every mask
+    FastSAM finds as a polygon contour + a class-less random colour index.
+    ~150-400ms per frame on M3 Pro CPU depending on complexity."""
+    model = _ensure_fastsam_auto()
+    img_bytes = base64.b64decode(image_b64)
+    arr = np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
+    h, w = arr.shape[:2]
+
+    with _lock:
+        t0 = time.perf_counter()
+        r = model.predict(arr, imgsz=imgsz, conf=conf, verbose=False)[0]
+        dur = (time.perf_counter() - t0) * 1000
+
+    polygons: list[list[list[int]]] = []
+    areas: list[int] = []
+    if r.masks is None:
+        return {"w": w, "h": h, "polygons": [], "count": 0, "latency_ms": int(dur)}
+
+    masks = r.masks.data.cpu().numpy()
+    for mask in masks:
+        mask8 = (mask.astype(np.uint8) * 255)
+        if mask8.shape[:2] != (h, w):
+            mask8 = cv2.resize(mask8, (w, h), interpolation=cv2.INTER_NEAREST)
+        contours, _h = cv2.findContours(mask8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        c = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(c)
+        if area < (w * h) * 0.002:  # drop specks
+            continue
+        eps = max(1.0, 0.003 * cv2.arcLength(c, True))
+        approx = cv2.approxPolyDP(c, eps, True).reshape(-1, 2).astype(int).tolist()
+        if len(approx) >= 3:
+            polygons.append(approx)
+            areas.append(int(area))
+
+    # Sort largest-first so the overlay draws big regions under small ones.
+    order = sorted(range(len(polygons)), key=lambda i: -areas[i])
+    polygons = [polygons[i] for i in order]
+    return {
+        "w": w,
+        "h": h,
+        "polygons": polygons,
+        "count": len(polygons),
+        "latency_ms": int(dur),
+    }
 
 
 def people_segment(image_b64: str, threshold: float = 0.5) -> dict:

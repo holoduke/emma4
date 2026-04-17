@@ -124,6 +124,30 @@ class FaceMeshResponse(BaseModel):
     latency_ms: int
 
 
+class TranscribeRequest(BaseModel):
+    audio: str = Field(..., description="Base64 of any audio container ffmpeg can read (WebM, MP3, WAV)")
+    language: str | None = Field(None, max_length=8, description="ISO language code hint, e.g. 'en'")
+
+
+class TranscribeResponse(BaseModel):
+    text: str
+    language: str | None = None
+    latency_ms: int
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1000)
+    voice: str = Field("af_bella", max_length=60)
+    speed: float = Field(1.0, ge=0.5, le=2.0)
+
+
+class SpeakResponse(BaseModel):
+    audio: str  # base64 WAV
+    sample_rate: int
+    samples: int
+    latency_ms: int
+
+
 class ToolExecRequest(BaseModel):
     command: str = Field(..., min_length=1, max_length=4000)
     cwd: str | None = Field(None, max_length=500)

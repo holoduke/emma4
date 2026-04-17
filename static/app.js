@@ -324,6 +324,16 @@ function renderTurnMeta(botBody, turn) {
   const meta = document.createElement("div");
   meta.className = "meta";
   meta.innerHTML = `<b>${tps} tok/s</b> · ${tokens} tokens · TTFT ${ttft}s · total ${totalS}s`;
+  // Inline SPEAK button so the user can hear the answer via Kokoro TTS.
+  const speakBtn = document.createElement("button");
+  speakBtn.type = "button";
+  speakBtn.className = "speak-btn";
+  speakBtn.textContent = "♪ SPEAK";
+  speakBtn.addEventListener("click", () => {
+    const text = botBody.textContent || "";
+    if (text) speakText(text, speakBtn);
+  });
+  meta.appendChild(speakBtn);
   botBody.parentElement.appendChild(meta);
   const last = document.getElementById("s-last");
   if (last) last.textContent = `${tps} tok/s`;
@@ -487,6 +497,112 @@ attachInput.addEventListener("change", async (e) => {
   attachInput.value = "";
   renderAttachStrip();
 });
+
+/* ---------- Mic button (hold to record → Whisper transcribe) ---------- */
+const micBtn = document.getElementById("mic-btn");
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordStream = null;
+
+async function startRecording() {
+  try {
+    recordStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordedChunks = [];
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : "";
+    mediaRecorder = new MediaRecorder(recordStream, mime ? { mimeType: mime } : {});
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = async () => {
+      recordStream.getTracks().forEach((t) => t.stop());
+      recordStream = null;
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+      const buf = await blob.arrayBuffer();
+      const b64 = _bytesToBase64(new Uint8Array(buf));
+      micBtn.classList.remove("recording");
+      micBtn.textContent = "⋯";
+      try {
+        const res = await fetch("/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio: b64 }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.text) {
+          inputEl.value = (inputEl.value ? inputEl.value + " " : "") + data.text;
+          autosize();
+          inputEl.focus();
+        }
+      } catch (err) {
+        if (document.body.classList.contains("mode-video")) {
+          appendFeed(`[STT ERR] ${err.message}`, "err");
+        } else {
+          addMessage("sys", `[STT ERR] ${err.message}`);
+        }
+      } finally {
+        micBtn.textContent = "🎤";
+      }
+    };
+    mediaRecorder.start();
+    micBtn.classList.add("recording");
+    micBtn.textContent = "●";
+  } catch (err) {
+    alert(`mic failed: ${err.message}`);
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+    mediaRecorder = null;
+  }
+}
+
+micBtn.addEventListener("mousedown", startRecording);
+micBtn.addEventListener("touchstart", startRecording, { passive: true });
+micBtn.addEventListener("mouseup", stopRecording);
+micBtn.addEventListener("mouseleave", stopRecording);
+micBtn.addEventListener("touchend", stopRecording);
+
+/* ---------- Speak button on bot messages (Kokoro TTS) ---------- */
+let _speakAudio = null;
+let _speakBtn = null;
+
+async function speakText(text, btn) {
+  if (_speakAudio) {
+    _speakAudio.pause();
+    _speakAudio = null;
+    if (_speakBtn) _speakBtn.classList.remove("playing");
+  }
+  btn.classList.add("playing");
+  btn.textContent = "⏹ STOP";
+  _speakBtn = btn;
+  try {
+    const res = await fetch("/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 900) }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _speakAudio = new Audio(`data:audio/wav;base64,${data.audio}`);
+    _speakAudio.onended = () => {
+      btn.classList.remove("playing");
+      btn.textContent = "♪ SPEAK";
+      _speakAudio = null;
+    };
+    _speakAudio.play();
+  } catch (err) {
+    btn.classList.remove("playing");
+    btn.textContent = "♪ SPEAK";
+    console.warn("TTS failed:", err);
+  }
+}
 
 inputEl.addEventListener("paste", async (e) => {
   const items = e.clipboardData?.items || [];

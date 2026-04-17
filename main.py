@@ -45,8 +45,12 @@ from schemas import (
     ScanRequest,
     ScanResponse,
     SetModelRequest,
+    SpeakRequest,
+    SpeakResponse,
     ToolExecRequest,
     ToolExecResponse,
+    TranscribeRequest,
+    TranscribeResponse,
 )
 
 logging_setup.configure()
@@ -549,6 +553,36 @@ async def ocr_endpoint(request: ImageOnlyRequest) -> OcrResponse:
         raise HTTPException(status_code=500, detail=str(err)) from err
     log.info(f"/ocr -> {res['latency_ms']}ms items={len(res['items'])}")
     return OcrResponse(**res)
+
+
+@app.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe_endpoint(request: TranscribeRequest) -> TranscribeResponse:
+    import audio
+    try:
+        res = await asyncio.to_thread(audio.transcribe, request.audio, request.language)
+    except Exception as err:
+        log.error(f"/transcribe !! {err}")
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    log.info(f"/transcribe -> {res['latency_ms']}ms chars={len(res['text'])}")
+    return TranscribeResponse(**res)
+
+
+@app.post("/speak", response_model=SpeakResponse)
+async def speak_endpoint(request: SpeakRequest) -> SpeakResponse:
+    import audio
+    try:
+        res = await asyncio.to_thread(audio.speak, request.text, request.voice, request.speed)
+    except Exception as err:
+        log.error(f"/speak !! {err}")
+        raise HTTPException(status_code=500, detail=str(err)) from err
+    log.info(f"/speak -> {res['latency_ms']}ms samples={res['samples']}")
+    return SpeakResponse(**res)
+
+
+@app.get("/voices")
+async def voices_endpoint() -> dict:
+    import audio
+    return {"voices": await asyncio.to_thread(audio.list_voices)}
 
 
 @app.post("/face", response_model=FaceMeshResponse)

@@ -680,6 +680,8 @@ function stopCam() {
   stopLive();
   if (typeof stopTrack === "function") stopTrack();
   if (typeof stopScanAuto === "function") stopScanAuto();
+  if (typeof stopPose === "function") stopPose();
+  if (typeof stopFace === "function") stopFace();
   autoTrackPrimed = false;
   if (camResizeObserver) {
     camResizeObserver.disconnect();
@@ -926,14 +928,91 @@ function clearOverlay() {
   camLabels.innerHTML = "";
 }
 
-function drawDetections(result) {
-  const { polygons, boxes, labels, confidences, w, h } = result;
-  camCanvas.width = w;
-  camCanvas.height = h;
-  const ctx = camCanvas.getContext("2d");
-  ctx.clearRect(0, 0, w, h);
-  camLabels.innerHTML = "";
+// Shared overlay state so TRACK / POSE / FACE can all composite on the same canvas.
+const overlay = { detect: null, pose: null, face: null };
+function clearOverlayState(which) {
+  if (which) overlay[which] = null;
+  else { overlay.detect = null; overlay.pose = null; overlay.face = null; }
+}
 
+function drawOverlay() {
+  const srcs = [overlay.detect, overlay.pose, overlay.face].filter(Boolean);
+  if (!srcs.length) { clearOverlay(); return; }
+  const cw = Math.max(...srcs.map((s) => s.w || 0));
+  const ch = Math.max(...srcs.map((s) => s.h || 0));
+  camCanvas.width = cw;
+  camCanvas.height = ch;
+  const ctx = camCanvas.getContext("2d");
+  ctx.clearRect(0, 0, cw, ch);
+  camLabels.innerHTML = "";
+  if (overlay.detect) _drawDetectionsOn(ctx, overlay.detect, cw, ch);
+  if (overlay.pose)   _drawPoseOn(ctx, overlay.pose);
+  if (overlay.face)   _drawFaceOn(ctx, overlay.face);
+}
+
+function _drawPoseOn(ctx, data) {
+  if (!data.people || !data.people.length) return;
+  const skeleton = [[5,6],[5,11],[6,12],[11,12],[5,7],[7,9],[6,8],[8,10],[11,13],[13,15],[12,14],[14,16],[0,1],[0,2],[1,3],[2,4]];
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#ff2bd6";
+  ctx.fillStyle = "#00f0ff";
+  ctx.shadowColor = "#00f0ff";
+  ctx.shadowBlur = 8;
+  for (const p of data.people) {
+    const kp = p.keypoints;
+    const kc = p.kp_conf || [];
+    for (const [a, b] of skeleton) {
+      if ((kc[a] || 1) < 0.3 || (kc[b] || 1) < 0.3) continue;
+      ctx.beginPath();
+      ctx.moveTo(kp[a][0], kp[a][1]); ctx.lineTo(kp[b][0], kp[b][1]);
+      ctx.stroke();
+    }
+    for (let i = 0; i < kp.length; i++) {
+      if ((kc[i] || 1) < 0.3) continue;
+      ctx.beginPath();
+      ctx.arc(kp[i][0], kp[i][1], 4, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+  ctx.shadowBlur = 0;
+}
+
+function _drawFaceOn(ctx, data) {
+  if (!data.faces || !data.faces.length) return;
+  ctx.fillStyle = "#39ff14";
+  ctx.shadowColor = "#39ff14";
+  ctx.shadowBlur = 4;
+  for (const f of data.faces) {
+    for (const [x, y] of f.landmarks) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1.2, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+  ctx.shadowBlur = 0;
+  ctx.font = "16px 'Orbitron','Share Tech Mono',monospace";
+  for (const f of data.faces) {
+    if (!f.emotion) continue;
+    const [x1, y1] = f.box;
+    const label = `${f.emotion.toUpperCase()} ${(f.emotion_score * 100) | 0}%`;
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillStyle = "rgba(5,6,11,0.85)";
+    ctx.fillRect(x1, Math.max(y1 - 22, 0), tw, 22);
+    ctx.fillStyle = "#ff2bd6";
+    ctx.shadowColor = "#ff2bd6";
+    ctx.shadowBlur = 6;
+    ctx.fillText(label, x1 + 5, Math.max(y1 - 6, 16));
+    ctx.shadowBlur = 0;
+  }
+}
+
+function drawDetections(result) {
+  overlay.detect = result;
+  drawOverlay();
+}
+
+function _drawDetectionsOn(ctx, result, w, h) {
+  const { polygons, boxes, labels, confidences } = result;
   const count = Math.max(polygons?.length || 0, boxes?.length || 0);
   for (let idx = 0; idx < count; idx++) {
     const [stroke, fill] = COLORS[idx % COLORS.length];
@@ -1054,7 +1133,8 @@ function stopTrack() {
   if (trackTimer) clearTimeout(trackTimer);
   trackTimer = null;
   trackToggle.setAttribute("aria-pressed", "false");
-  clearOverlay();
+  clearOverlayState("detect");
+  drawOverlay();
 }
 
 trackToggle.addEventListener("click", () => {
@@ -1522,7 +1602,103 @@ document.getElementById("btn-ocr").addEventListener("click", () =>
     img.src = `data:image/jpeg;base64,${origB64}`;
   }));
 
-document.getElementById("btn-face").addEventListener("click", () =>
+/* ---------- live POSE / FACE overlay loops ---------- */
+let poseTimer = null, poseToken = 0, poseBusy = false;
+let faceTimer = null, faceToken = 0, faceBusy = false;
+const poseBtnEl = document.getElementById("btn-pose");
+const faceBtnEl = document.getElementById("btn-face");
+
+async function poseTick() {
+  if (poseBusy || !camStream) return;
+  poseBusy = true;
+  try {
+    const b = await captureFrame(FRAME_SIZE, 0.75);
+    if (!b) return;
+    const res = await fetch("/pose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: b }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    overlay.pose = data;
+    drawOverlay();
+    if (data.latency_ms != null) setStat("s-op-pose", `${data.latency_ms} ms`);
+  } catch (err) {
+    console.warn("pose loop", err);
+    setStat("s-op-pose", "err");
+  } finally {
+    poseBusy = false;
+  }
+}
+function startPose() {
+  if (poseTimer || !camStream) return;
+  poseBtnEl.setAttribute("aria-pressed", "true");
+  const t = ++poseToken;
+  const loop = async () => {
+    if (t !== poseToken) return;
+    await poseTick();
+    if (t === poseToken) poseTimer = setTimeout(loop, 20);
+  };
+  poseTimer = setTimeout(loop, 0);
+}
+function stopPose() {
+  poseToken++;
+  if (poseTimer) clearTimeout(poseTimer);
+  poseTimer = null;
+  poseBtnEl.setAttribute("aria-pressed", "false");
+  clearOverlayState("pose");
+  drawOverlay();
+}
+
+async function faceTick() {
+  if (faceBusy || !camStream) return;
+  faceBusy = true;
+  try {
+    const b = await captureFrame(FRAME_SIZE, 0.75);
+    if (!b) return;
+    const res = await fetch("/face", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: b, emotion: true }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    overlay.face = data;
+    drawOverlay();
+    if (data.latency_ms != null) setStat("s-op-face", `${data.latency_ms} ms`);
+  } catch (err) {
+    console.warn("face loop", err);
+    setStat("s-op-face", "err");
+  } finally {
+    faceBusy = false;
+  }
+}
+function startFace() {
+  if (faceTimer || !camStream) return;
+  faceBtnEl.setAttribute("aria-pressed", "true");
+  const t = ++faceToken;
+  const loop = async () => {
+    if (t !== faceToken) return;
+    await faceTick();
+    if (t === faceToken) faceTimer = setTimeout(loop, 20);
+  };
+  faceTimer = setTimeout(loop, 0);
+}
+function stopFace() {
+  faceToken++;
+  if (faceTimer) clearTimeout(faceTimer);
+  faceTimer = null;
+  faceBtnEl.setAttribute("aria-pressed", "false");
+  clearOverlayState("face");
+  drawOverlay();
+}
+
+poseBtnEl.addEventListener("click", () => (poseTimer ? stopPose() : startPose()));
+faceBtnEl.addEventListener("click", () => (faceTimer ? stopFace() : startFace()));
+
+/* Legacy one-shot FACE card (kept but no longer wired to the button). */
+function _legacyFaceOneShot() {
   runOneShot("/face", "FACE", { emotion: true }, (data, origB64) => {
     const c = document.createElement("canvas");
     c.width = data.w; c.height = data.h;
@@ -1561,9 +1737,11 @@ document.getElementById("btn-face").addEventListener("click", () =>
       _feedCard(`// FACE · ${data.faces.length} · ${emos || "no emotion"}`, "var(--green)", out);
     };
     img.src = `data:image/jpeg;base64,${origB64}`;
-  }));
+  });
+}
 
-document.getElementById("btn-pose").addEventListener("click", () =>
+/* Legacy one-shot POSE card. */
+function _legacyPoseOneShot() {
   runOneShot("/pose", "POSE", {}, (data, origB64) => {
     // draw keypoints on a copy of the frame
     const c = document.createElement("canvas");
@@ -1601,7 +1779,8 @@ document.getElementById("btn-pose").addEventListener("click", () =>
       _feedCard(`// POSE · ${data.people.length} people`, "var(--amber)", out);
     };
     img.src = `data:image/jpeg;base64,${origB64}`;
-  }));
+  });
+}
 
 const scanAutoBtn = document.getElementById("cam-scan-auto");
 function startScanAuto() {

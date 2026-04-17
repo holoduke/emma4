@@ -132,13 +132,13 @@
           <span id="gen-strength-val">0.70</span>
         </div>
         <div class="extras-row">
-          <button type="button" id="btn-pose" class="mini-btn" title="YOLO pose: human keypoints overlay">POSE</button>
-          <button type="button" id="btn-depth" class="mini-btn" title="Depth Anything V2 Small — coloured depth map">DEPTH</button>
-          <button type="button" id="btn-cutout" class="mini-btn" title="Background removal (U2Net / rembg)">CUTOUT</button>
+          <button type="button" id="btn-pose" class="mini-btn toggle-mini" aria-pressed="false" title="Live pose skeleton overlay on the video">POSE</button>
+          <button type="button" id="btn-face" class="mini-btn toggle-mini" aria-pressed="false" title="Live face mesh + emotion overlay">FACE</button>
         </div>
         <div class="extras-row">
+          <button type="button" id="btn-depth" class="mini-btn" title="Depth Anything V2 Small — coloured depth map (single shot)">DEPTH</button>
+          <button type="button" id="btn-cutout" class="mini-btn" title="Background removal (U2Net / rembg)">CUTOUT</button>
           <button type="button" id="btn-ocr" class="mini-btn" title="Read text in the frame (EasyOCR)">OCR</button>
-          <button type="button" id="btn-face" class="mini-btn" title="MediaPipe face mesh landmarks">FACE</button>
         </div>
         <div class="cam-interval">
           <label for="cam-interval">interval (LIVE + AUTO)</label>

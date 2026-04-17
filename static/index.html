@@ -93,10 +93,11 @@
 
         <!-- Live overlay toggles — all per-frame pipelines in one row -->
         <div class="extras-row extras-row-overlays">
+          <button type="button" id="cam-live" class="mini-btn toggle-mini" aria-pressed="false" title="Gemma live scene description (appended to the LIVE FEED)">LIVE</button>
           <button type="button" id="track-toggle" class="mini-btn toggle-mini" aria-pressed="false" title="Open-vocab detection from the TRACK input (YOLO-World / Grounding DINO)">TRACK</button>
           <button type="button" id="masks-toggle" class="mini-btn toggle-mini" aria-pressed="false" title="Pixel outlines (slower). Off = boxes (~25 fps)">MASKS</button>
-          <button type="button" id="btn-pose" class="mini-btn toggle-mini" aria-pressed="false" title="Live pose skeleton overlay on the video">POSE</button>
-          <button type="button" id="btn-face" class="mini-btn toggle-mini" aria-pressed="false" title="Live face mesh + emotion overlay">FACE</button>
+          <button type="button" id="btn-pose" class="mini-btn toggle-mini" aria-pressed="false" title="Live pose skeleton + body fill, stable #ids per person">POSE</button>
+          <button type="button" id="btn-face" class="mini-btn toggle-mini" aria-pressed="false" title="Live face mesh + emotion + stable #ids">FACE</button>
           <button type="button" id="btn-people" class="mini-btn toggle-mini" aria-pressed="false" title="Live person outline via MediaPipe Selfie Segmenter (~10ms)">PEOPLE</button>
         </div>
         <div class="track-row">
@@ -109,7 +110,6 @@
         <div id="scan-chips" class="scan-chips" hidden></div>
 
         <div class="cam-controls">
-          <button type="button" id="cam-live" class="mini-btn toggle-mini" aria-pressed="false">LIVE</button>
           <button type="button" id="cam-scan" class="mini-btn" title="Detect objects in current frame with Gemma">SCAN</button>
           <button type="button" id="cam-scan-auto" class="mini-btn toggle-mini" aria-pressed="false" title="Re-scan every N seconds (shares the LIVE interval)">AUTO</button>
         </div>

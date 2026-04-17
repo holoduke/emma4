@@ -972,17 +972,51 @@ function _drawPeopleOn(ctx, data) {
   ctx.shadowBlur = 0;
 }
 
+function _convexHull(points) {
+  // Andrew's monotone chain.
+  const pts = points.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (pts.length < 3) return pts;
+  const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
 function _drawPoseOn(ctx, data) {
   if (!data.people || !data.people.length) return;
   const skeleton = [[5,6],[5,11],[6,12],[11,12],[5,7],[7,9],[6,8],[8,10],[11,13],[13,15],[12,14],[14,16],[0,1],[0,2],[1,3],[2,4]];
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "#ff2bd6";
-  ctx.fillStyle = "#00f0ff";
-  ctx.shadowColor = "#00f0ff";
-  ctx.shadowBlur = 8;
   for (const p of data.people) {
     const kp = p.keypoints;
     const kc = p.kp_conf || [];
+    // Body silhouette = convex hull of confident keypoints, semi-transparent magenta.
+    const visible = kp.filter((_, i) => (kc[i] || 1) >= 0.3);
+    if (visible.length >= 3) {
+      const hull = _convexHull(visible);
+      ctx.fillStyle = "rgba(255, 43, 214, 0.16)";
+      ctx.strokeStyle = "rgba(255, 43, 214, 0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(hull[0][0], hull[0][1]);
+      for (let i = 1; i < hull.length; i++) ctx.lineTo(hull[i][0], hull[i][1]);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // Skeleton lines + joint dots.
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#ff2bd6";
+    ctx.fillStyle = "#00f0ff";
+    ctx.shadowColor = "#00f0ff";
+    ctx.shadowBlur = 8;
     for (const [a, b] of skeleton) {
       if ((kc[a] || 1) < 0.3 || (kc[b] || 1) < 0.3) continue;
       ctx.beginPath();
@@ -995,28 +1029,61 @@ function _drawPoseOn(ctx, data) {
       ctx.arc(kp[i][0], kp[i][1], 4, 0, 2 * Math.PI);
       ctx.fill();
     }
+    ctx.shadowBlur = 0;
+    // Stable #id label near the head (nose keypoint index 0).
+    if (p.id != null && (kc[0] || 1) >= 0.3) {
+      const [hx, hy] = kp[0];
+      const label = `#${p.id}`;
+      ctx.font = "bold 14px 'Orbitron','Share Tech Mono',monospace";
+      const tw = ctx.measureText(label).width + 8;
+      ctx.fillStyle = "rgba(5,6,11,0.85)";
+      ctx.fillRect(hx - tw / 2, hy - 34, tw, 20);
+      ctx.fillStyle = "#ff2bd6";
+      ctx.shadowColor = "#ff2bd6";
+      ctx.shadowBlur = 6;
+      ctx.textAlign = "center";
+      ctx.fillText(label, hx, hy - 20);
+      ctx.textAlign = "start";
+      ctx.shadowBlur = 0;
+    }
   }
-  ctx.shadowBlur = 0;
 }
 
 function _drawFaceOn(ctx, data) {
   if (!data.faces || !data.faces.length) return;
-  ctx.fillStyle = "#39ff14";
-  ctx.shadowColor = "#39ff14";
-  ctx.shadowBlur = 4;
   for (const f of data.faces) {
+    // Convex hull of the mesh = face silhouette, semi-transparent green fill.
+    if (f.landmarks && f.landmarks.length >= 3) {
+      const hull = _convexHull(f.landmarks);
+      ctx.fillStyle = "rgba(57, 255, 20, 0.12)";
+      ctx.strokeStyle = "rgba(57, 255, 20, 0.45)";
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(hull[0][0], hull[0][1]);
+      for (let i = 1; i < hull.length; i++) ctx.lineTo(hull[i][0], hull[i][1]);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // Mesh landmark dots.
+    ctx.fillStyle = "#39ff14";
+    ctx.shadowColor = "#39ff14";
+    ctx.shadowBlur = 4;
     for (const [x, y] of f.landmarks) {
       ctx.beginPath();
       ctx.arc(x, y, 1.2, 0, 2 * Math.PI);
       ctx.fill();
     }
+    ctx.shadowBlur = 0;
   }
-  ctx.shadowBlur = 0;
   ctx.font = "16px 'Orbitron','Share Tech Mono',monospace";
   for (const f of data.faces) {
-    if (!f.emotion) continue;
+    const parts = [];
+    if (f.id != null) parts.push(`#${f.id}`);
+    if (f.emotion) parts.push(`${f.emotion.toUpperCase()} ${(f.emotion_score * 100) | 0}%`);
+    if (!parts.length) continue;
     const [x1, y1] = f.box;
-    const label = `${f.emotion.toUpperCase()} ${(f.emotion_score * 100) | 0}%`;
+    const label = parts.join(" ");
     const tw = ctx.measureText(label).width + 10;
     ctx.fillStyle = "rgba(5,6,11,0.85)";
     ctx.fillRect(x1, Math.max(y1 - 22, 0), tw, 22);

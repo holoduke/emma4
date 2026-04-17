@@ -39,7 +39,7 @@ def _ensure_pose():
     return _pose_model
 
 
-def pose_estimate(image_b64: str, conf: float = 0.3, imgsz: int = 480) -> dict:
+def pose_estimate(image_b64: str, conf: float = 0.3, imgsz: int = 480, track: bool = True) -> dict:
     model = _ensure_pose()
     img_bytes = base64.b64decode(image_b64)
     arr = np.array(Image.open(io.BytesIO(img_bytes)).convert("RGB"))
@@ -47,7 +47,10 @@ def pose_estimate(image_b64: str, conf: float = 0.3, imgsz: int = 480) -> dict:
 
     with _lock:
         t0 = time.perf_counter()
-        r = model.predict(arr, verbose=False, conf=conf, imgsz=imgsz)[0]
+        if track:
+            r = model.track(arr, verbose=False, conf=conf, imgsz=imgsz, persist=True, tracker="bytetrack.yaml")[0]
+        else:
+            r = model.predict(arr, verbose=False, conf=conf, imgsz=imgsz)[0]
         dur = (time.perf_counter() - t0) * 1000
 
     if r.keypoints is None or len(r.keypoints) == 0:
@@ -57,6 +60,7 @@ def pose_estimate(image_b64: str, conf: float = 0.3, imgsz: int = 480) -> dict:
     kps_conf = r.keypoints.conf.cpu().numpy() if r.keypoints.conf is not None else None
     boxes = r.boxes.xyxy.cpu().numpy() if r.boxes is not None else None
     confs = r.boxes.conf.cpu().numpy() if r.boxes is not None else None
+    ids = r.boxes.id.cpu().numpy().astype(int) if (r.boxes is not None and r.boxes.id is not None) else None
 
     people = []
     for i in range(len(kps)):
@@ -65,6 +69,7 @@ def pose_estimate(image_b64: str, conf: float = 0.3, imgsz: int = 480) -> dict:
             "kp_conf": [float(c) for c in kps_conf[i]] if kps_conf is not None else None,
             "box": [int(v) for v in boxes[i]] if boxes is not None else None,
             "conf": float(confs[i]) if confs is not None else None,
+            "id": int(ids[i]) if ids is not None else None,
         }
         people.append(person)
     return {"w": w, "h": h, "people": people, "latency_ms": int(dur)}
@@ -256,6 +261,57 @@ def _ensure_emotion():
     return _emotion_pipe
 
 
+_face_id_state: dict = {"tracks": [], "next_id": 1}  # {id, box, ttl}
+
+
+def _iou(a: list[int], b: list[int]) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+    iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(1, (ax2 - ax1)) * max(1, (ay2 - ay1))
+    area_b = max(1, (bx2 - bx1)) * max(1, (by2 - by1))
+    return inter / (area_a + area_b - inter)
+
+
+def _assign_face_ids(faces: list[dict]) -> None:
+    """Greedy IoU matcher against previous frame's tracks. Mutates faces
+    in-place, adding an 'id' key. Unmatched faces get a new ID; tracks
+    without a match drop after 10 frames (TTL)."""
+    prev = _face_id_state["tracks"]
+    used_prev: set[int] = set()
+    assigned = [False] * len(faces)
+    # Greedy best-IoU matching.
+    for i, f in enumerate(faces):
+        best_j, best_iou = -1, 0.2  # require IoU >= 0.2 for a match
+        for j, t in enumerate(prev):
+            if j in used_prev:
+                continue
+            iou = _iou(f["box"], t["box"])
+            if iou > best_iou:
+                best_iou = iou
+                best_j = j
+        if best_j >= 0:
+            f["id"] = prev[best_j]["id"]
+            used_prev.add(best_j)
+            assigned[i] = True
+    # Unmatched → new IDs.
+    for i, f in enumerate(faces):
+        if not assigned[i]:
+            f["id"] = _face_id_state["next_id"]
+            _face_id_state["next_id"] += 1
+    # Carry forward: keep matched, decrement TTL for unseen tracks, drop ≤0.
+    new_tracks = [{"id": f["id"], "box": f["box"], "ttl": 10} for f in faces]
+    for j, t in enumerate(prev):
+        if j not in used_prev and t["ttl"] > 1:
+            new_tracks.append({"id": t["id"], "box": t["box"], "ttl": t["ttl"] - 1})
+    _face_id_state["tracks"] = new_tracks
+
+
 def face_mesh(image_b64: str, emotion: bool = False) -> dict:
     import mediapipe as mp
 
@@ -279,6 +335,9 @@ def face_mesh(image_b64: str, emotion: bool = False) -> dict:
             "landmarks": [[round(x, 1), round(y, 1)] for x, y in pts],
             "box": [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))],
         })
+
+    # Cross-frame IDs via simple IoU greedy match.
+    _assign_face_ids(faces)
 
     dur_emo = 0.0
     if emotion and faces:

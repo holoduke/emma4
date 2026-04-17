@@ -14,6 +14,9 @@ diffusers>=0.30
 accelerate
 peft
 safetensors
+# Apple Silicon native backend (faster Gemma 4 chat + vision via MLX)
+# Only installs on macOS-arm64; safely no-op on other platforms.
+mlx-vlm; sys_platform == "darwin" and platform_machine == "arm64"
 # NOTE: torch is pulled in transitively by ultralytics. For NVIDIA CUDA, install
 # the matching wheel first:  pip install torch --index-url https://download.pytorch.org/whl/cu121
 # For macOS (Apple Silicon), the default PyPI wheel already includes MPS support.

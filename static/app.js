@@ -533,6 +533,7 @@ async function startRecording() {
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        if (data.latency_ms != null) setStat("s-op-stt", `${data.latency_ms} ms`);
         if (data.text) {
           inputEl.value = (inputEl.value ? inputEl.value + " " : "") + data.text;
           autosize();
@@ -590,6 +591,7 @@ async function speakText(text, btn) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    if (data.latency_ms != null) setStat("s-op-tts", `${data.latency_ms} ms`);
     _speakAudio = new Audio(`data:audio/wav;base64,${data.audio}`);
     _speakAudio.onended = () => {
       btn.classList.remove("playing");
@@ -600,6 +602,7 @@ async function speakText(text, btn) {
   } catch (err) {
     btn.classList.remove("playing");
     btn.textContent = "♪ SPEAK";
+    setStat("s-op-tts", "err");
     console.warn("TTS failed:", err);
   }
 }
@@ -1304,11 +1307,13 @@ async function runReplace() {
     }
     const out = await inpaintRes.json();
     showInpaintResult(out, prompt);
+    setStat("s-op-replace", `${out.latency_ms} ms`);
     appendFeed(
       `[REPLACE] done · ${out.latency_ms} ms · ${out.width}×${out.height} · steps ${out.steps}`,
       "scan",
     );
   } catch (err) {
+    setStat("s-op-replace", "err");
     appendFeed(`[REPLACE ERR] ${err.message}`, "err");
   } finally {
     replaceBtn.disabled = false;
@@ -1387,12 +1392,14 @@ async function runGenerate() {
     }
     const out = await res.json();
     showGenResult(out, prompt);
+    setStat("s-op-gen", `${out.latency_ms} ms`);
     appendFeed(
       `[GEN] done · ${out.latency_ms} ms · ${out.width}×${out.height} · steps ${out.steps}`,
       "scan",
     );
   } catch (err) {
     appendFeed(`[GEN ERR] ${err.message}`, "err");
+    setStat("s-op-gen", "err");
   } finally {
     genBtn.disabled = false;
     genBtn.textContent = orig;
@@ -1441,6 +1448,14 @@ function _feedCard(headLabel, headColor, imgB64) {
   camFeedBody.scrollTop = 0;
 }
 
+const ONESHOT_STAT = {
+  POSE: "s-op-pose",
+  DEPTH: "s-op-depth",
+  CUTOUT: "s-op-cutout",
+  OCR: "s-op-ocr",
+  FACE: "s-op-face",
+};
+
 async function runOneShot(path, label, extraBody = {}, draw) {
   if (!camStream) {
     appendFeed(`[${label}] camera not active`, "err");
@@ -1459,9 +1474,13 @@ async function runOneShot(path, label, extraBody = {}, draw) {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0,200)}`);
     const data = await res.json();
     appendFeed(`[${label}] ${data.latency_ms} ms`, "scan");
+    const statId = ONESHOT_STAT[label];
+    if (statId && data.latency_ms != null) setStat(statId, `${data.latency_ms} ms`);
     draw(data, imageB64);
   } catch (err) {
     appendFeed(`[${label} ERR] ${err.message}`, "err");
+    const statId = ONESHOT_STAT[label];
+    if (statId) setStat(statId, "err");
   } finally {
     if (btn && btn.tagName === "BUTTON") btn.disabled = false;
   }

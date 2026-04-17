@@ -878,12 +878,20 @@ body.mode-video .bar-mini { width: 24px; }
 .extras-row {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
 }
 .extras-row .mini-btn {
   border-color: var(--amber);
   color: var(--amber);
 }
 .extras-row .mini-btn:hover { background: rgba(255, 176, 0, 0.15); box-shadow: 0 0 10px rgba(255, 176, 0, 0.4); }
+/* Live-overlay row sits at the top of the controls pane — use the cyan
+   accent so it reads as "pipelines" rather than "one-shot actions". */
+.extras-row-overlays .mini-btn {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.extras-row-overlays .mini-btn:hover { background: rgba(0, 240, 255, 0.15); box-shadow: 0 0 10px rgba(0, 240, 255, 0.35); }
 
 .inpaint-result {
   margin-top: 8px;

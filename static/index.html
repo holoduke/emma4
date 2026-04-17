@@ -90,6 +90,24 @@
 
       <section id="cam-view" class="cam-view">
         <div class="cam-title">// CONTROLS</div>
+
+        <!-- Live overlay toggles — all per-frame pipelines in one row -->
+        <div class="extras-row extras-row-overlays">
+          <button type="button" id="track-toggle" class="mini-btn toggle-mini" aria-pressed="false" title="Open-vocab detection from the TRACK input (YOLO-World / Grounding DINO)">TRACK</button>
+          <button type="button" id="masks-toggle" class="mini-btn toggle-mini" aria-pressed="false" title="Pixel outlines (slower). Off = boxes (~25 fps)">MASKS</button>
+          <button type="button" id="btn-pose" class="mini-btn toggle-mini" aria-pressed="false" title="Live pose skeleton overlay on the video">POSE</button>
+          <button type="button" id="btn-face" class="mini-btn toggle-mini" aria-pressed="false" title="Live face mesh + emotion overlay">FACE</button>
+          <button type="button" id="btn-people" class="mini-btn toggle-mini" aria-pressed="false" title="Live person outline via MediaPipe Selfie Segmenter (~10ms)">PEOPLE</button>
+        </div>
+        <div class="track-row">
+          <input id="track-input" type="text" placeholder="track: person, cup..." />
+        </div>
+        <div class="custom-tag-row">
+          <input id="custom-tag-input" type="text" placeholder="+ add custom tag (e.g. background)" />
+          <button type="button" id="custom-tag-add" class="mini-btn" title="Add custom tag">ADD</button>
+        </div>
+        <div id="scan-chips" class="scan-chips" hidden></div>
+
         <div class="cam-controls">
           <button type="button" id="cam-live" class="mini-btn toggle-mini" aria-pressed="false">LIVE</button>
           <button type="button" id="cam-scan" class="mini-btn" title="Detect objects in current frame with Gemma">SCAN</button>
@@ -113,16 +131,6 @@
           ></textarea>
           <button type="button" id="scan-prompt-reset" class="tiny-btn" title="Reset to default">↺</button>
         </div>
-        <div class="track-row">
-          <input id="track-input" type="text" placeholder="track: person, cup..." />
-          <button type="button" id="track-toggle" class="mini-btn toggle-mini" aria-pressed="false">TRACK</button>
-          <button type="button" id="masks-toggle" class="mini-btn toggle-mini" aria-pressed="false" title="Pixel outlines (slower). Off = boxes (~25 fps)">MASKS</button>
-        </div>
-        <div class="custom-tag-row">
-          <input id="custom-tag-input" type="text" placeholder="+ add custom tag (e.g. background)" />
-          <button type="button" id="custom-tag-add" class="mini-btn" title="Add custom tag">ADD</button>
-        </div>
-        <div id="scan-chips" class="scan-chips" hidden></div>
         <div class="replace-row">
           <input id="replace-input" type="text" placeholder='replace selected with... e.g. "a fluffy cat"' />
           <button type="button" id="replace-btn" class="mini-btn" title="Inpaint: replace the masked region with your prompt (SD 1.5 + LCM, ~3-5s)">REPLACE</button>
@@ -135,11 +143,6 @@
           <label for="gen-strength">strength</label>
           <input id="gen-strength" type="range" min="0.2" max="0.95" step="0.05" value="0.7" />
           <span id="gen-strength-val">0.70</span>
-        </div>
-        <div class="extras-row">
-          <button type="button" id="btn-pose" class="mini-btn toggle-mini" aria-pressed="false" title="Live pose skeleton overlay on the video">POSE</button>
-          <button type="button" id="btn-face" class="mini-btn toggle-mini" aria-pressed="false" title="Live face mesh + emotion overlay">FACE</button>
-          <button type="button" id="btn-people" class="mini-btn toggle-mini" aria-pressed="false" title="Live person outline via MediaPipe Selfie Segmenter (~10ms)">PEOPLE</button>
         </div>
         <div class="extras-row">
           <button type="button" id="btn-depth" class="mini-btn" title="Depth Anything V2 Small — coloured depth map (single shot)">DEPTH</button>

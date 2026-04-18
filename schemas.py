@@ -178,6 +178,25 @@ class TranscribeResponse(BaseModel):
     latency_ms: int
 
 
+class TranslateRequest(BaseModel):
+    audio: str = Field(..., description="Base64 audio (same formats as /transcribe)")
+    target_language: str = Field(..., min_length=2, max_length=30, description="Target language in plain English, e.g. 'Japanese', 'Spanish'")
+    source_language: str | None = Field(None, description="Source language hint for Whisper; auto-detect when None")
+    voice: str = Field("af_bella", max_length=60, description="Kokoro voice to speak the translation")
+    speak: bool = Field(True, description="Return TTS audio of the translation")
+
+
+class TranslateResponse(BaseModel):
+    source_text: str
+    translated_text: str
+    detected_language: str | None = None
+    target_language: str
+    audio: str | None = None
+    sample_rate: int | None = None
+    latency_ms: int
+    timings_ms: dict[str, int]
+
+
 class SpeakRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=1000)
     voice: str = Field("af_bella", max_length=60)

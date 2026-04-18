@@ -643,6 +643,18 @@ body.mode-video .bar-mini { width: 24px; }
   transition: all 0.15s;
 }
 .icon-btn:hover { background: rgba(0, 240, 255, 0.12); box-shadow: 0 0 10px rgba(0, 240, 255, 0.35); }
+.translate-lang {
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--magenta);
+  border: 1px solid rgba(255, 43, 214, 0.45);
+  padding: 4px 8px;
+  font-family: "Share Tech Mono", monospace;
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+}
+.translate-lang:focus { border-color: var(--magenta); box-shadow: 0 0 6px rgba(255, 43, 214, 0.35); }
 .icon-btn.recording {
   background: var(--danger);
   color: var(--bg);

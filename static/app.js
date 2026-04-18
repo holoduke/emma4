@@ -525,25 +525,49 @@ async function startRecording() {
       const b64 = _bytesToBase64(new Uint8Array(buf));
       micBtn.classList.remove("recording");
       micBtn.textContent = "⋯";
+      const langSel = document.getElementById("translate-lang");
+      const targetLang = langSel ? langSel.value : "";
       try {
-        const res = await fetch("/transcribe", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio: b64 }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (data.latency_ms != null) setStat("s-op-stt", `${data.latency_ms} ms`);
-        if (data.text) {
-          inputEl.value = (inputEl.value ? inputEl.value + " " : "") + data.text;
-          autosize();
-          inputEl.focus();
+        if (targetLang) {
+          // Live translation pipeline: STT -> Gemma translate -> Kokoro TTS
+          const res = await fetch("/translate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio: b64, target_language: targetLang, speak: true }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 160)}`);
+          const data = await res.json();
+          if (data.timings_ms) {
+            if (data.timings_ms.stt_ms != null) setStat("s-op-stt", `${data.timings_ms.stt_ms} ms`);
+            if (data.timings_ms.tts_ms != null) setStat("s-op-tts", `${data.timings_ms.tts_ms} ms`);
+          }
+          const line = `🎤 "${data.source_text}" → 🌐 "${data.translated_text}"`;
+          if (document.body.classList.contains("mode-video")) appendFeed(line, "scan");
+          else addMessage("sys", line);
+          if (data.audio) {
+            const a = new Audio(`data:audio/wav;base64,${data.audio}`);
+            a.play();
+          }
+        } else {
+          const res = await fetch("/transcribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audio: b64 }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          if (data.latency_ms != null) setStat("s-op-stt", `${data.latency_ms} ms`);
+          if (data.text) {
+            inputEl.value = (inputEl.value ? inputEl.value + " " : "") + data.text;
+            autosize();
+            inputEl.focus();
+          }
         }
       } catch (err) {
         if (document.body.classList.contains("mode-video")) {
-          appendFeed(`[STT ERR] ${err.message}`, "err");
+          appendFeed(`[MIC ERR] ${err.message}`, "err");
         } else {
-          addMessage("sys", `[STT ERR] ${err.message}`);
+          addMessage("sys", `[MIC ERR] ${err.message}`);
         }
       } finally {
         micBtn.textContent = "🎤";

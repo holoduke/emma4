@@ -57,6 +57,8 @@ from schemas import (
     ToolExecResponse,
     TranscribeRequest,
     TranscribeResponse,
+    TranslateRequest,
+    TranslateResponse,
 )
 
 logging_setup.configure()
@@ -572,6 +574,77 @@ async def transcribe_endpoint(request: TranscribeRequest) -> TranscribeResponse:
         raise HTTPException(status_code=500, detail=str(err)) from err
     log.info(f"/transcribe -> {res['latency_ms']}ms chars={len(res['text'])}")
     return TranscribeResponse(**res)
+
+
+@app.post("/translate", response_model=TranslateResponse)
+async def translate_endpoint(request: TranslateRequest) -> TranslateResponse:
+    """Full speech-in → speech-out pipeline: Whisper STT → Gemma translate → Kokoro TTS."""
+    import audio
+
+    t0 = time.perf_counter()
+    timings: dict[str, int] = {}
+
+    # 1) Transcribe
+    try:
+        stt = await asyncio.to_thread(audio.transcribe, request.audio, request.source_language)
+    except Exception as err:
+        log.error(f"/translate stt !! {err}")
+        raise HTTPException(status_code=500, detail=f"stt failed: {err}") from err
+    timings["stt_ms"] = stt["latency_ms"]
+    source_text = stt["text"].strip()
+    if not source_text:
+        raise HTTPException(status_code=400, detail="no speech detected")
+
+    # 2) Translate via Gemma — terse prompt + JSON-ish output we can post-process.
+    model = _STATE["emma"]
+    backend = _dispatch(model)
+    trans_prompt = (
+        f"Translate the following sentence to {request.target_language}. "
+        f"Return ONLY the translated sentence, no quotes, no explanations, no extra text.\n\n"
+        f"Sentence: {source_text}"
+    )
+    t_trans = time.perf_counter()
+    try:
+        raw = await backend.chat(
+            model=model,
+            messages=[{"role": "user", "content": trans_prompt}],
+            temperature=0.2,
+            max_tokens=300,
+            think=False,
+        )
+    except Exception as err:
+        log.error(f"/translate llm !! {err}")
+        raise HTTPException(status_code=502, detail=f"translation model failed: {err}") from err
+    translated_text = (raw.get("message", {}).get("content") or "").strip().strip('"').strip("'")
+    timings["translate_ms"] = int((time.perf_counter() - t_trans) * 1000)
+
+    # 3) TTS (optional)
+    audio_b64 = None
+    sample_rate = None
+    if request.speak and translated_text:
+        try:
+            tts = await asyncio.to_thread(audio.speak, translated_text[:900], request.voice, 1.0)
+            audio_b64 = tts["audio"]
+            sample_rate = tts["sample_rate"]
+            timings["tts_ms"] = tts["latency_ms"]
+        except Exception as err:
+            log.warning(f"/translate tts failed (non-fatal): {err}")
+
+    latency = int((time.perf_counter() - t0) * 1000)
+    log.info(
+        f"/translate -> {latency}ms src={stt.get('language')} tgt={request.target_language!r} "
+        f"'{source_text[:40]}' -> '{translated_text[:40]}'"
+    )
+    return TranslateResponse(
+        source_text=source_text,
+        translated_text=translated_text,
+        detected_language=stt.get("language"),
+        target_language=request.target_language,
+        audio=audio_b64,
+        sample_rate=sample_rate,
+        latency_ms=latency,
+        timings_ms=timings,
+    )
 
 
 @app.post("/speak", response_model=SpeakResponse)
